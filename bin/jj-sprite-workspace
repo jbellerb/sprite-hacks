@@ -1,0 +1,379 @@
+#!/bin/sh
+
+if test -z "$NO_COLOR"
+then
+    BOLD=$(printf "\033[1m")
+    RED=$(printf "\033[31m")
+    GREEN=$(printf "\033[32m")
+    YELLOW=$(printf "\033[33m")
+    PURPLE=$(printf "\033[35m")
+    RESET_COLOR=$(printf "\033[39m")
+    RESET=$(printf "\033[0m")
+fi
+
+jj_sprite_workspace_error() {
+    echo "${BOLD}${RED}Error:${RESET} ${BOLD}$1${RESET}" >&2
+    return 1
+}
+
+jj_sprite_workspace_warning() {
+    echo "${BOLD}${YELLOW}Warning:${RESET} ${BOLD}$1${RESET}" >&2
+    return 1
+}
+
+# locate the Git directory
+if ! GIT_DIR=$(jj git root 2>/dev/null)
+then
+    jj_sprite_workspace_error "There is no jj repo in '${PURPLE}.${RESET_COLOR}'"
+    exit
+fi
+export GIT_DIR
+
+jj_sprite_workspace_prompt_yn() {
+    if test -t 0
+    then
+        # evil pty things
+        termstate=$(stty -g)
+        stty raw; stty echo -icanon min 1 time 0
+        yn=$(dd ibs=1 count=1 2>/dev/null)
+        stty "$termstate"; echo
+    else
+        read -r yn
+    fi
+
+    case $yn in
+    [Yy]|[Yy][Ee][Ss]) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
+jj_sprite_workspace_load_meta() {
+    remote=$1
+
+    script_path=$GIT_DIR/sprite-workspaces/$remote.meta
+    if ! test -e "$script_path"
+    then
+        jj_sprite_workspace_error "Remote not found"
+        return
+    fi
+
+    cat "$script_path"
+}
+
+jj_sprite_workspace_remove_worktree() {
+    remote=$1
+
+    if ! meta=$(jj_sprite_workspace_load_meta "$remote")
+    then
+        return
+    fi
+    {
+        IFS= read -r sprite_name
+        IFS= read -r destination
+    } << EOF
+$meta
+EOF
+
+    sprite exec -s "$sprite_name" -- rm -rf "$destination" > /dev/null 2>&1 || \
+        jj_sprite_workspace_warning "Failed to remove Git worktree on Sprite" || return
+}
+
+jj_sprite_workspace_remove_remote() {
+    remote=$1
+
+    if ! meta=$(jj_sprite_workspace_load_meta "$remote")
+    then
+        return
+    fi
+    {
+        IFS= read -r _
+        IFS= read -r _
+        IFS= read -r host
+    } << EOF
+$meta
+EOF
+
+    jj git remote remove "$remote" || return
+    git config unset --value " for $host$" --all core.gitProxy
+    rm "$GIT_DIR/sprite-workspaces/$remote"
+    rm "$GIT_DIR/sprite-workspaces/$remote.meta"
+}
+
+jj_sprite_workspace_add_gitproxy() {
+    sprite_name=$1
+    destination=$2
+    remote=$3
+
+    mkdir -p "$GIT_DIR/sprite-workspaces"
+    script_path=$GIT_DIR/sprite-workspaces/$remote
+
+    if test -e "$script_path"
+    then
+        jj_sprite_workspace_error \
+            "Workspace '${PURPLE}$destination${RESET_COLOR}' on Sprite '${PURPLE}$sprite_name${RESET_COLOR}' already exists"
+        return
+    fi
+
+    cat > "$script_path" << EOF && chmod +x "$script_path"
+#!/bin/sh
+
+sprite exec -s '$sprite_name' -- \
+    git daemon --serve --export-all --enable=receive-pack \
+        --base-path=/home/sprite '/home/sprite/$destination'
+EOF
+
+    host="$destination.$sprite_name.sprite.internal"
+    git config set --value " for $host$" --all \
+        core.gitProxy "$script_path for $host"
+
+    # persist Sprite and destination
+    printf "%s\n%s\n%s\n" "$sprite_name" "$destination" "$host" \
+        > "$script_path.meta"
+
+    echo "git://$host/$destination"
+}
+
+jj_sprite_workspace_add_usage_line() {
+    echo "${BOLD}${YELLOW}Usage:${RESET} ${BOLD}${GREEN}jj sprite-workspace add${RESET} ${GREEN}[OPTIONS]${RESET} ${GREEN}<SPRITE>${RESET} ${GREEN}[<DESTINATION>]${RESET}"
+}
+
+jj_sprite_workspace_add_usage() {
+    cat <<EOF
+Create a new workspace on a Sprite
+
+$(jj_sprite_workspace_add_usage_line)
+
+${BOLD}${YELLOW}Arguments:${RESET}
+  ${GREEN}<SPRITE>${RESET}       What sprite to create the workspace on
+  ${GREEN}<DESTINATION>${RESET}  Where to create the workspace (defaults to "workspace")
+
+${BOLD}${YELLOW}Options:${RESET}
+  ${BOLD}${GREEN}-b${RESET}, ${BOLD}${GREEN}--bookmark${RESET} ${GREEN}<BOOKMARK>${RESET}  Use this bookmark as the base of the workspace
+  ${BOLD}${GREEN}-r${RESET}, ${BOLD}${GREEN}--revisions${RESET} ${GREEN}<REVSETS>${RESET}  Push bookmarks pointing to these commits
+EOF
+}
+
+jj_sprite_workspace_add() {
+    while test $# -gt 0
+    do
+      case "$1" in
+        -b|--bookmark) shift; bookmark=$1 ;;
+        -r|--revisions) shift; revset=$1 ;;
+        -h|--help) jj_sprite_workspace_add_usage; return ;;
+        -*)
+            cat >&2 << EOF
+$(jj_sprite_workspace_error "Unexpected argument '${YELLOW}$1${RESET_COLOR}' found" 2>&1)
+
+$(jj_sprite_workspace_add_usage_line)
+
+For more information, try '${BOLD}${GREEN}--help${RESET}'.
+EOF
+            return 2
+            ;;
+        *) break ;;
+      esac
+      shift
+    done
+
+    sprite_name=$1
+    destination=${2:-workspace}
+    if test -z "$sprite_name"
+    then
+        cat >&2 << EOF
+$(jj_sprite_workspace_error "The following required arguments were not provided:" 2>&1)
+  ${GREEN}<SPRITE>${RESET}
+
+$(jj_sprite_workspace_add_usage_line)
+
+For more information, try '${BOLD}${GREEN}--help${RESET}'.
+EOF
+        return 2
+    fi
+    case "$destination" in
+    /*) jj_sprite_workspace_error "Destination cannot be an absolute path"; return ;;
+    */) jj_sprite_workspace_error "Destination cannot end with a '/' character"; return ;;
+    .|..|./*|../*|*/.|*/..|*/./*|*/../*)
+        jj_sprite_workspace_error "Destination cannot contain path components"
+        return
+        ;;
+    esac
+
+    if test -n "$bookmark" && test -n "$revset"
+    then
+        jj_sprite_workspace_error \
+            "'${YELLOW}-r${RESET_COLOR}' and '${YELLOW}-b${RESET_COLOR}' options are mutually exclusive"
+        return
+    fi
+
+    if ! sprite url -s "$sprite_name" > /dev/null 2>&1
+    then
+        printf \
+            "Sprite '${BOLD}${PURPLE}%s${RESET}' does not exist. Would you like to create it? (y/n) " \
+            "$sprite_name"
+        jj_sprite_workspace_prompt_yn || return
+        sprite create --skip-console "$sprite_name"
+    fi
+
+    # set up the Git proxy
+    remote=$sprite_name-$(printf '%s' "$destination" | tr '/ ' '-')
+    if ! url=$(jj_sprite_workspace_add_gitproxy "$sprite_name" "$destination" "$remote")
+    then
+        return
+    fi
+    jj git remote add "$remote" "$url" > /dev/null 2>&1 # always pass
+
+    # create the Git worktree and push
+    ! sprite exec -s "$sprite_name" -- test -e "$destination" 2> /dev/null || \
+        {
+            jj_sprite_workspace_error "A file at '${PURPLE}$destination${RESET_COLOR}' already exists on Sprite"
+            jj_sprite_workspace_remove_remote "$remote"
+            return 1
+        }
+    if test -z "$bookmark"
+    then
+        bookmark=$remote
+        revset=${revset:-trunk()}
+        jj bookmark create --revision "$revset" "$bookmark" --quiet || \
+            { jj_sprite_workspace_remove_remote "$remote"; return; }
+    fi
+    sprite exec -s "$sprite_name" -- git init "$destination" --quiet || \
+        {
+            jj_sprite_workspace_error "Failed to create Git worktree on Sprite"
+            jj_sprite_workspace_remove_remote "$remote"
+            return 1
+        }
+    jj git push --remote "$remote" --bookmark "$bookmark" --allow-new || \
+        jj_sprite_workspace_warning \
+            "Failed to push to remote. Try running \`jj git push --remote $remote --bookmark $bookmark --allow-new\`."
+
+    # switch to the branch within the Sprite
+    sprite exec -s "$sprite_name" -- git --git-dir="$destination/.git" \
+        --work-tree="$destination" switch "$bookmark" --quiet
+
+    echo "Workspace created. Switch to it with \`jj sprite-workspace switch $remote\`"
+}
+
+jj_sprite_workspace_cleanup_usage_line() {
+    echo "${BOLD}${YELLOW}Usage:${RESET} ${BOLD}${GREEN}jj sprite-workspace cleanup${RESET} ${GREEN}<REMOTE>${RESET}"
+}
+
+jj_sprite_workspace_cleanup_usage() {
+    cat <<EOF
+Remove and untrack a Sprite workspace
+
+$(jj_sprite_workspace_cleanup_usage_line)
+
+${BOLD}${YELLOW}Arguments:${RESET}
+  ${GREEN}<REMOTE>${RESET}  Sprite workspace to remove
+EOF
+}
+
+jj_sprite_workspace_cleanup() {
+    case "$1" in
+    -h|--help) jj_sprite_workspace_cleanup_usage; return ;;
+    "")
+        cat >&2 << EOF
+$(jj_sprite_workspace_error "The following required arguments were not provided:" 2>&1)
+  ${GREEN}<REMOTE>${RESET}
+
+$(jj_sprite_workspace_cleanup_usage_line)
+
+For more information, try '${BOLD}${GREEN}--help${RESET}'.
+EOF
+        return 2
+        ;;
+    *) remote=$1; shift ;;
+    esac
+
+    # fetch one last time to catch remaining changes
+    jj git fetch --remote "$remote" > /dev/null 2>&1
+
+    jj_sprite_workspace_remove_worktree "$remote" > /dev/null 2>&1
+    jj_sprite_workspace_remove_remote "$remote" || return
+
+    # try to delete the bookmark if it exists
+    if test -n "$(jj bookmark list "$remote")"
+    then
+        jj bookmark delete "$remote"
+    fi
+}
+
+jj_sprite_workspace_switch_usage_line() {
+    echo "${BOLD}${YELLOW}Usage:${RESET} ${BOLD}${GREEN}jj sprite-workspace switch${RESET} ${GREEN}<REMOTE>${RESET} ${GREEN}[<COMMAND>${RESET} ${GREEN}[ARGS]...]${RESET}"
+}
+
+jj_sprite_workspace_switch_usage() {
+    cat <<EOF
+Start a shell session within the Sprite workspace
+
+$(jj_sprite_workspace_switch_usage_line)
+
+${BOLD}${YELLOW}Arguments:${RESET}
+  ${GREEN}<REMOTE>${RESET}               Sprite workspace to connect to
+  ${GREEN}[<COMMAND>${RESET} ${GREEN}[ARGS]...]${RESET}  Command to execute and its arguments
+EOF
+}
+
+jj_sprite_workspace_switch() {
+    case "$1" in
+    -h|--help) jj_sprite_workspace_switch_usage; return ;;
+    "")
+        cat >&2 << EOF
+$(jj_sprite_workspace_error "The following required arguments were not provided:" 2>&1)
+  ${GREEN}<REMOTE>${RESET}
+
+$(jj_sprite_workspace_switch_usage_line)
+
+For more information, try '${BOLD}${GREEN}--help${RESET}'.
+EOF
+        return 2
+        ;;
+    *) remote=$1; shift ;;
+    esac
+
+    {
+        IFS= read -r sprite_name
+        IFS= read -r destination
+    } << EOF
+$(jj_sprite_workspace_load_meta "$remote" || return)
+EOF
+
+    if test "$#" -eq "0"
+    then
+        sprite exec -s "$sprite_name" -tty -- \
+            sh -c "cd '$destination' && if command -v '$SHELL' > /dev/null; then '$SHELL'; else bash; fi"
+    else
+        sprite exec -s "$sprite_name" -tty -- \
+            sh -c "cd \"$destination\"; \"\$@\"" -- "$@"
+    fi
+    status=$?
+
+    # after returning, pull from the remote
+    jj git fetch --remote "$remote"
+    exit "$status"
+}
+
+jj_sprite_workspace_usage_line() {
+    echo "${BOLD}${YELLOW}Usage:${RESET} ${BOLD}${GREEN}jj sprite-workspace${RESET} ${GREEN}<COMMAND>${RESET}"
+}
+
+jj_sprite_workspace_usage() {
+    cat <<EOF
+Commands for creating isolated workspaces within Sprites
+
+$(jj_sprite_workspace_usage_line)
+
+${BOLD}${YELLOW}Commands:${RESET}
+  ${BOLD}${GREEN}add${RESET}      Create a new workspace on a Sprite
+  ${BOLD}${GREEN}cleanup${RESET}  Remove and untrack a Sprite workspace
+  ${BOLD}${GREEN}switch${RESET}   Start a shell session within the Sprite workspace
+EOF
+}
+
+case "$1" in
+add) shift; jj_sprite_workspace_add "$@" ;;
+cleanup) shift; jj_sprite_workspace_cleanup "$@" ;;
+switch) shift; jj_sprite_workspace_switch "$@" ;;
+-h|--help) jj_sprite_workspace_usage ;;
+*) jj_sprite_workspace_usage; exit 2 ;;
+esac
