@@ -1,0 +1,9 @@
+(version 1)
+(deny default)
+(allow process-exec* (literal "/usr/libexec/sftp-server"))
+(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))
+(allow file-read-metadata (subpath "/"))
+(allow file-read-data (regex #"^/$"))
+(allow file-read-data file-write-data (literal "/dev/null"))
+
+(allow file-read-data file-write-data (subpath "/Users/jae/Documents/sprite-shared"))
