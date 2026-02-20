@@ -94,9 +94,38 @@ $meta
 EOF
 
     jj git remote remove "$remote" || return
-    git config unset --value " for $host$" --all core.gitProxy
-    rm "$GIT_DIR/sprite-workspaces/$remote"
+    # only clean up proxy if host is set
+    if test -n "$host"
+    then
+        git config unset --value " for $host$" --all core.gitProxy
+        rm "$GIT_DIR/sprite-workspaces/$remote"
+    fi
     rm "$GIT_DIR/sprite-workspaces/$remote.meta"
+}
+
+jj_sprite_workspace_has_git_remote_sprite() {
+    command -v git-remote-sprite > /dev/null
+}
+
+jj_sprite_workspace_add_sprite_remote() {
+    sprite_name=$1
+    destination=$2
+    remote=$3
+
+    mkdir -p "$GIT_DIR/sprite-workspaces"
+    meta_path=$GIT_DIR/sprite-workspaces/$remote.meta
+
+    if test -e "$meta_path"
+    then
+        jj_sprite_workspace_error \
+            "Workspace '${PURPLE}$destination${RESET_COLOR}' on Sprite '${PURPLE}$sprite_name${RESET_COLOR}' already exists"
+        return
+    fi
+
+    # persist Sprite and destination (no host for sprite:// method)
+    printf "%s\n%s\n\n" "$sprite_name" "$destination" > "$meta_path"
+
+    echo "sprite://$sprite_name/$destination"
 }
 
 jj_sprite_workspace_add_gitproxy() {
@@ -156,7 +185,7 @@ EOF
 jj_sprite_workspace_add() {
     while test $# -gt 0
     do
-      case "$1" in
+        case "$1" in
         -b|--bookmark) shift; bookmark=$1 ;;
         -r|--revisions) shift; revset=$1 ;;
         -h|--help) jj_sprite_workspace_add_usage; return ;;
@@ -171,8 +200,8 @@ EOF
             return 2
             ;;
         *) break ;;
-      esac
-      shift
+        esac
+        shift
     done
 
     sprite_name=$1
@@ -214,11 +243,13 @@ EOF
         sprite create --skip-console "$sprite_name"
     fi
 
-    # set up the Git proxy
+    # set up the Git remote (use sprite:// if available, otherwise use proxy)
     remote=$sprite_name-$(printf '%s' "$destination" | tr '/ ' '-')
-    if ! url=$(jj_sprite_workspace_add_gitproxy "$sprite_name" "$destination" "$remote")
+    if jj_sprite_workspace_has_git_remote_sprite
     then
-        return
+        url=$(jj_sprite_workspace_add_sprite_remote "$sprite_name" "$destination" "$remote") || return
+    else
+        url=$(jj_sprite_workspace_add_gitproxy "$sprite_name" "$destination" "$remote") || return
     fi
     jj git remote add "$remote" "$url" > /dev/null 2>&1 # always pass
 
