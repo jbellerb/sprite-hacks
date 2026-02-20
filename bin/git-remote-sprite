@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+
+_REMOTE=$1
+URI=$2
+
+SCHEME=${URI%%:*}
+AUTHORITY_AND_PATH=${URI#$SCHEME://}
+
+SPRITE=${AUTHORITY_AND_PATH%%/*}
+DESTINATION=${AUTHORITY_AND_PATH#*/}
+
+test "$SCHEME" == "sprite" || { echo "Unexpected scheme: $SCHEME" >&2; exit 1; }
+
+while IFS= read -r line
+do
+    case "$line" in
+    capabilities) printf "*connect\n\n" ;;
+    connect\ *)
+        service="${line#connect }"
+        printf "\n"
+        exec sprite exec -s "$SPRITE" -- "$service" "/home/sprite/$DESTINATION"
+        ;;
+    *) echo "Unknown command: $line" >&2; exit 1 ;;
+    esac
+done

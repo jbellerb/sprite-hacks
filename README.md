@@ -21,6 +21,12 @@ Add the alias to your `jj/config.toml`:
 sprite-workspace = ["util", "exec", "--", ".../bin/jj-sprite-workspace"]
 ```
 
+## `sprite://` Git remotes
+
+Custom [remote helper](https://git-scm.com/docs/gitremote-helpers) to use any Sprite as a Git remote. No setup required, since files are sent directly over `sprite exec`.
+
+![Terminal session demonstrating the Sprite Git remote handler. User runs "less" to show the contents of git-remote-sprite. User connects to a Sprite and clones a Git repository. On the local machine, user runs "git clone -o sprite sprite://stuff-dev/sprite-hacks" to clone the repository that was just created on the Sprite. User creates a new branch, creates the file "test.txt", commits, and pushes the commit to the sprite with "git push -u sprite test-branch". User connects to the sprite again, switches to the test branch, and shows the pushed commit with "git log".](demos/git-remote-sprite.gif)
+
 <br />
 
 #### License
