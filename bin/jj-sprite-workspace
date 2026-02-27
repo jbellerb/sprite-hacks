@@ -11,6 +11,8 @@ then
     RESET=$(printf "\033[0m")
 fi
 
+DEFAULT_REVSET='exactly(heads(::@ & mutable() & description(~"") & (~empty() | merges())), 1)'
+
 jj_sprite_workspace_error() {
     echo "${BOLD}${RED}Error:${RESET} ${BOLD}$1${RESET}" >&2
     return 1
@@ -263,7 +265,7 @@ EOF
     if test -z "$bookmark"
     then
         bookmark=$remote
-        revset=${revset:-trunk()}
+        revset=${revset:-$DEFAULT_REVSET}
         jj bookmark create --revision "$revset" "$bookmark" --quiet || \
             { jj_sprite_workspace_remove_remote "$remote"; return; }
     fi
