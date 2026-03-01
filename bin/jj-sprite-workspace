@@ -11,7 +11,7 @@ then
     RESET=$(printf "\033[0m")
 fi
 
-DEFAULT_REVSET='exactly(heads(::@ & mutable() & description(~"") & (~empty() | merges())), 1)'
+DEFAULT_REVSET='exactly(heads(::@ & mutable() & description(~exact:"") & (~empty() | merges())), 1)'
 
 jj_sprite_workspace_error() {
     echo "${BOLD}${RED}Error:${RESET} ${BOLD}$1${RESET}" >&2
