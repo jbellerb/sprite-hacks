@@ -76,8 +76,9 @@ jj_sprite_workspace_remove_worktree() {
 $meta
 EOF
 
-    sprite exec -s "$sprite_name" -- rm -rf "$destination" > /dev/null 2>&1 || \
-        jj_sprite_workspace_warning "Failed to remove Git worktree on Sprite" || return
+    sprite exec --sprite "$sprite_name" -- \
+        rm -rf "$destination" > /dev/null 2>&1 || \
+            jj_sprite_workspace_warning "Failed to remove Git worktree on Sprite" || return
 }
 
 jj_sprite_workspace_remove_remote() {
@@ -148,7 +149,7 @@ jj_sprite_workspace_add_gitproxy() {
     cat > "$script_path" << EOF && chmod +x "$script_path"
 #!/bin/sh
 
-sprite exec -s '$sprite_name' -- \
+sprite exec --sprite '$sprite_name' -- \
     git daemon --serve --export-all --enable=receive-pack \
         --base-path=/home/sprite '/home/sprite/$destination'
 EOF
@@ -236,7 +237,7 @@ EOF
         return
     fi
 
-    if ! sprite url -s "$sprite_name" > /dev/null 2>&1
+    if ! sprite url --sprite "$sprite_name" > /dev/null 2>&1
     then
         printf \
             "Sprite '${BOLD}${PURPLE}%s${RESET}' does not exist. Would you like to create it? (y/n) " \
@@ -256,7 +257,8 @@ EOF
     jj git remote add "$remote" "$url" > /dev/null 2>&1 # always pass
 
     # create the Git worktree and push
-    ! sprite exec -s "$sprite_name" -- test -e "$destination" 2> /dev/null || \
+    ! sprite exec --sprite "$sprite_name" -- \
+        test -e "$destination" 2> /dev/null || \
         {
             jj_sprite_workspace_error "A file at '${PURPLE}$destination${RESET_COLOR}' already exists on Sprite"
             jj_sprite_workspace_remove_remote "$remote"
@@ -269,7 +271,7 @@ EOF
         jj bookmark create --revision "$revset" "$bookmark" --quiet || \
             { jj_sprite_workspace_remove_remote "$remote"; return; }
     fi
-    sprite exec -s "$sprite_name" -- git init "$destination" --quiet || \
+    sprite exec --sprite "$sprite_name" -- git init "$destination" --quiet || \
         {
             jj_sprite_workspace_error "Failed to create Git worktree on Sprite"
             jj_sprite_workspace_remove_remote "$remote"
@@ -280,7 +282,7 @@ EOF
             "Failed to push to remote. Try running \`jj git push --remote $remote --bookmark $bookmark --allow-new\`."
 
     # switch to the branch within the Sprite
-    sprite exec -s "$sprite_name" -- git --git-dir="$destination/.git" \
+    sprite exec --sprite "$sprite_name" -- git --git-dir="$destination/.git" \
         --work-tree="$destination" switch "$bookmark" --quiet
 
     echo "Workspace created. Switch to it with \`jj sprite-workspace switch $remote\`"
@@ -373,10 +375,10 @@ EOF
 
     if test "$#" -eq "0"
     then
-        sprite exec -s "$sprite_name" -tty -- \
+        sprite exec --sprite "$sprite_name" --tty -- \
             sh -c "cd '$destination' && if command -v '$SHELL' > /dev/null; then '$SHELL'; else bash; fi"
     else
-        sprite exec -s "$sprite_name" -tty -- \
+        sprite exec --sprite "$sprite_name" --tty -- \
             sh -c "cd \"$destination\"; \"\$@\"" -- "$@"
     fi
     status=$?

@@ -18,7 +18,8 @@ do
     connect\ *)
         service="${line#connect }"
         printf "\n"
-        exec sprite exec -s "$SPRITE" -- "$service" "/home/sprite/$DESTINATION"
+        exec sprite exec --sprite "$SPRITE" -- \
+            "$service" "/home/sprite/$DESTINATION"
         ;;
     *) echo "Unknown command: $line" >&2; exit 1 ;;
     esac
