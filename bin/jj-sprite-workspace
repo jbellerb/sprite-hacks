@@ -277,9 +277,10 @@ EOF
             jj_sprite_workspace_remove_remote "$remote"
             return 1
         }
-    jj git push --remote "$remote" --bookmark "$bookmark" --allow-new || \
+    jj bookmark track "$bookmark" --remote "$remote" && \
+        jj git push --remote "$remote" --bookmark "$bookmark" || \
         jj_sprite_workspace_warning \
-            "Failed to push to remote. Try running \`jj git push --remote $remote --bookmark $bookmark --allow-new\`."
+            "Failed to push to remote. Try running \`jj bookmark track $bookmark --remote $remote && jj git push --remote $remote --bookmark $bookmark\`."
 
     # switch to the branch within the Sprite
     sprite exec --sprite "$sprite_name" -- git --git-dir="$destination/.git" \
