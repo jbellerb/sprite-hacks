@@ -24,7 +24,8 @@ jj_sprite_workspace_warning() {
 }
 
 # locate the Git directory
-if ! GIT_DIR=$(jj git root 2>/dev/null)
+if ! GIT_DIR=$(jj git root 2> /dev/null) || \
+    ! WORKSPACE_DIR=$(jj workspace root 2> /dev/null)
 then
     jj_sprite_workspace_error "There is no jj repo in '${PURPLE}.${RESET_COLOR}'"
     exit
@@ -165,6 +166,80 @@ EOF
     echo "git://$host/$destination"
 }
 
+jj_sprite_workspace_list_submodules() {
+    while IFS='	' read -r toplevel sm_path name
+    do
+        toplevel_git=$(
+            env -u GIT_DIR git -C "$toplevel" rev-parse --absolute-git-dir
+        )
+
+        printf "%s\t%s\t%s\n" "$name" \
+            ".git${toplevel_git#$GIT_DIR}/modules/$name" \
+            "${toplevel#$WORKSPACE_DIR}/$sm_path"
+    done << EOF
+$(
+    git submodule --quiet foreach --recursive \
+        'printf "%s\t%s\t%s\n" "$toplevel" "$sm_path" "$name"'
+)
+EOF
+}
+
+jj_sprite_workspace_push_submodules() {
+    sprite_name=$1
+    destination=$2
+
+    submodule_info=$(jj_sprite_workspace_list_submodules)
+    test -n "$submodule_info" || return 0
+
+    if ! jj_sprite_workspace_has_git_remote_sprite
+    then
+        jj_sprite_workspace_warning \
+            "git-remote-sprite not found, skipping submodule upload"
+        return 0
+    fi
+
+    # initialize module git dirs on Sprite and push submodule content
+    while IFS='	' read -r name mod mod_tree <&3
+    do
+        if ! sprite exec --sprite "$sprite_name" -- \
+            sh -c "mkdir -p '$destination/$mod' && \
+                git init --separate-git-dir='$destination/$mod' \
+                    '$destination/$mod_tree' --quiet && \
+                git --git-dir='$destination/$mod' config \
+                    receive.denyCurrentBranch ignore"
+        then
+            jj_sprite_workspace_warning "Failed to init submodule '$name' on Sprite"
+            continue
+        fi
+
+        env -u GIT_DIR git -C "$WORKSPACE_DIR/$mod_tree" push \
+            "sprite://$sprite_name/$destination/$mod" --mirror 2> /dev/null || \
+                jj_sprite_workspace_warning "Failed to push submodule '$name'"
+    # redirect to fd 3 to avoid sprite exec consuming stdin
+    done 3<< EOF
+$submodule_info
+EOF
+
+    # set submodule URLs in parent git configs and fix up HEAD
+    while IFS='	' read -r name mod mod_tree <&3
+    do
+        head=$(env -u GIT_DIR git -C "$WORKSPACE_DIR/$mod_tree" rev-parse HEAD)
+        sprite exec --sprite "$sprite_name" -- \
+            sh -c "git --git-dir='$destination/$mod' update-ref --no-deref \
+                    HEAD '$head' && { \
+                git --git-dir='$destination/${mod%/modules/$name}' config \
+                    'submodule.$name.url' '/home/sprite/$destination/$mod'; \
+                git --git-dir='$destination/$mod' config --unset \
+                    receive.denyCurrentBranch;
+                }"
+    done 3<< EOF
+$submodule_info
+EOF
+
+    sprite exec --sprite "$sprite_name" -- \
+        git -C "$destination" submodule update --recursive --checkout --force
+}
+
 jj_sprite_workspace_add_usage_line() {
     echo "${BOLD}${YELLOW}Usage:${RESET} ${BOLD}${GREEN}jj sprite-workspace add${RESET} ${GREEN}[OPTIONS]${RESET} ${GREEN}<SPRITE>${RESET} ${GREEN}[<DESTINATION>]${RESET}"
 }
@@ -285,6 +360,8 @@ EOF
     # switch to the branch within the Sprite
     sprite exec --sprite "$sprite_name" -- git --git-dir="$destination/.git" \
         --work-tree="$destination" switch "$bookmark" --quiet
+
+    jj_sprite_workspace_push_submodules "$sprite_name" "$destination"
 
     echo "Workspace created. Switch to it with \`jj sprite-workspace switch $remote\`"
 }
