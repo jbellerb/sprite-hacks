@@ -169,6 +169,7 @@ EOF
 jj_sprite_workspace_list_submodules() {
     while IFS='	' read -r toplevel sm_path name
     do
+        test -n "$toplevel" || continue
         toplevel_git=$(
             env -u GIT_DIR git -C "$toplevel" rev-parse --absolute-git-dir
         )
