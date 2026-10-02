@@ -1,0 +1,65 @@
+#!/usr/bin/env sh
+
+TARGET=/home/sprite/.claude/.credentials.json
+SETUP='
+    set -e
+
+    stage=$(mktemp -d)
+    mount -t tmpfs -o size=1m,mode=700 tmpfs "$stage"
+
+    (umask 077; cat > "$stage/secret")
+    chown "$SUDO_UID:$SUDO_GID" "$stage/secret"
+
+    mount --bind "$stage/secret" '"\"$TARGET\""'
+    umount -l "$stage"
+    rm -r "$stage"
+
+    setsid sh -c "
+        while sleep 30
+        do
+            test \"\$(pgrep -c --ns \$\$ --nslist mnt)\" -gt 1 || break
+        done
+    " < /dev/null > /dev/null 2>&1 &
+    echo "$!"
+'
+
+SPRITE=$1
+
+ns_pid=$(
+    {
+        printf '%s\n%s' "$(printf %s "$SETUP" | wc -c | tr -d ' ')" "$SETUP"
+        security find-generic-password -s "Claude Code-credentials" -w
+    } | sprite exec --sprite "$SPRITE" --stdin -- sh -c '
+        mkdir -p "$(dirname '"\"$TARGET\""')"
+        touch '"\"$TARGET\""'
+
+        if test -f .claude.json
+        then
+            jq ".hasCompletedOnboarding = true" .claude.json > .claude.json.tmp
+            mv .claude.json.tmp .claude.json
+        else
+            echo "{\"hasCompletedOnboarding\":true}" > .claude.json
+        fi
+
+        exec sudo -n unshare --mount --propagation private \
+            sh -c "IFS= read -r n; eval \"\$(dd bs=1 count=\$n 2>/dev/null)\""
+    '
+) || {
+    echo "setup failed" >&2
+    exit 1
+}
+
+sprite exec --sprite "$SPRITE" --env SHELL="$SHELL" --tty -- sh -c '
+    # hack to comply with the strange capability set in Sprites v1
+    mask=$(sed -n "s/^CapInh:[[:space:]]*//p" /proc/self/status)
+    for c in $(setpriv --list-caps)
+    do
+        test $(( (0x$mask >> i) & 1 )) = 1 && caps=$caps,+$c
+        i=$((i + 1))
+    done
+    exec sudo -n nsenter -t '"$ns_pid"' -m \
+        setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups --reset-env \
+        --ambient-caps=-all$caps \
+        env PATH="$PATH" SHELL="$SHELL" \
+            sh -c "cd; exec /.sprite/bin/sprite-console"
+'

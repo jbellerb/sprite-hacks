@@ -27,6 +27,12 @@ Custom [remote helper](https://git-scm.com/docs/gitremote-helpers) to use any Sp
 
 ![Terminal session demonstrating the Sprite Git remote handler. User runs "less" to show the contents of git-remote-sprite. User connects to a Sprite and clones a Git repository. On the local machine, user runs "git clone -o sprite sprite://stuff-dev/sprite-hacks" to clone the repository that was just created on the Sprite. User creates a new branch, creates the file "test.txt", commits, and pushes the commit to the sprite with "git push -u sprite test-branch". User connects to the sprite again, switches to the test branch, and shows the pushed commit with "git log".](demos/git-remote-sprite.gif)
 
+## Forwarding secrets as in-memory credentials
+
+Forward a credential from the macOS toolchain to a console session in a Sprite. Secret is mounted in a private filesystem namespace and never stored on-disk.
+
+![Terminal session demonstrating Claude Code running on a Sprite with the user's local OAuth credentials. The terminal is in a new tmux session. User creates a Sprite named "fresh-sprite" and "claude auth status" reports that the Sprite is not logged in. On the host, user runs "less" to show the contents of sprite-claude. User runs "sprite-claude fresh-sprite", opening a new console session where Claude is logged in. User prints ~/.claude/.credentials.json with sed to redact the keys. While still logged in, user connects from another tmux window. The credential is in a session-private namespace, so this session's Claude is logged out and ~/.claude/.credentials.json is empty. In the original window, user asks Claude "ping" and Claude answers "pong". User exits the sessions and reconnects. Claude is again logged out.](demos/sprite-claude.gif)
+
 <br />
 
 #### License
